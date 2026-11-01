@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+node_modules/
+*.log
+.DS_Store
+# never commit weights or big outputs
+*.safetensors
+*.gguf
+*.ckpt
+*.glb
+*.fbx

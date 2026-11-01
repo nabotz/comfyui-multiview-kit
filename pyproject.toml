@@ -1,0 +1,14 @@
+[project]
+name = "comfyui-multiview-kit"
+description = "One image to a textured 3D model in ComfyUI: Qwen-Image edit turnaround views, a view cache, and shared-scale normalization for Pixal3D (TRELLIS.2) multi-view."
+version = "0.1.0"
+license = { file = "LICENSE" }
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/nabotz/comfyui-multiview-kit"
+
+[tool.comfy]
+PublisherId = "nabotz"
+DisplayName = "Multi-View Kit"
+Icon = ""
