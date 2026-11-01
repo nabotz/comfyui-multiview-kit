@@ -1,75 +1,114 @@
 # Multi-View Kit for ComfyUI
 
-One character image in, a textured 3D model (GLB) out, in a single ComfyUI workflow.
+**One character image in, a textured 3D model (GLB) out, in a single ComfyUI workflow.**
 
-Qwen-Image 2.1 (edit mode) draws clean side, front and back views of the character, the kit puts every view on the same scale, and Pixal3D (TRELLIS.2) multi-view turns them into a mesh with baked PBR textures.
+![8-angle render of a model generated from one image](docs/result_orbit.jpg)
 
-![8-angle render of a generated model](docs/result_orbit.jpg)
+```
+character image
+  └─ Qwen-Image 2.1 edit ──► side view ──► front view + back view
+       └─ Multi-View Views ──► save views / reuse saved views
+            └─ Multi-View Scale Normalize ──► cutout, same scale, mirrored opposite side
+                 └─ Pixal3D (TRELLIS.2) multi-view ──► mesh + baked PBR textures ──► .glb
+```
 
-## Why this exists
+## Why
 
-Pixal3D multi-view expects every view framed like a fixed camera rig: same scale in every view, the object spanning about 1/1.1 of the frame at its widest. The bundled `Crop Image to Mask` node fits each view to its own bounding box, so a long creature's front view ends up far bigger than its side view, and the 3D model grows duplicate features (double eyes, a second face). These nodes fix that and make the whole thing run in one queue.
+Pixal3D multi-view expects every view framed like a fixed camera rig: the same scale in every view, with the object spanning about 1/1.1 of the frame at its widest. ComfyUI's bundled `Crop Image to Mask` fits each view to its own bounding box, so a long creature's front view ends up much bigger than its side view, and the mesh grows duplicate features such as double eyes or a second face.
+
+This kit fixes the framing, generates the views for you, and lets you re-run only the 3D part while you experiment.
+
+## Quick start
+
+1. Install the nodes and restart ComfyUI:
+   ```bash
+   cd ComfyUI/custom_nodes
+   git clone https://github.com/nabotz/comfyui-multiview-kit
+   ```
+2. Drag [`example_workflows/image_to_3d_multiview.json`](example_workflows/image_to_3d_multiview.json) onto the canvas.
+3. Load your image, describe the character in **Multi-View Prompts**, and run.
+
+No extra Python packages are needed: it uses torch, numpy and PIL, plus scipy for speck removal if it is installed.
 
 ## Nodes
 
-| Node | What it does |
-|---|---|
-| **Multi-View Prompts (Qwen edit)** | Builds the side (facing left), front and back edit prompts from a short `subject` and optional `details`. The templates are editable on the node. |
-| **Multi-View Views (generate / reuse)** | `generate`: runs the Qwen branch and saves `side.png`, `front.png`, `back.png` to `output/<folder>/`. `reuse saved`: loads those files and skips Qwen entirely (lazy inputs), so re-running the 3D part with a different view combination takes minutes instead of re-generating everything. Views you switch off are not generated at all. |
-| **Multi-View Scale Normalize (Pixal3D)** | Cuts out every view (BiRefNet), drops stray specks, scales all views to the side view's height, frames them on one square canvas, and mirrors the side view to make the opposite side so both flanks match exactly. Outputs `front / left / back / right` for `Pixal3D Multi-View Conditioning` plus a preview strip. Disabled views output nothing, so Pixal3D skips them. |
+### Multi-View Prompts (Qwen edit)
+Builds the three edit prompts (side view facing left, front, back) from a short `subject` and optional `details`. The templates are editable on the node. The front and back templates tell Qwen not to leave a faint "ghost" of the side view in the background.
 
-![Normalized views: front (off) | left | back | right](docs/views_normalized.jpg)
+### Multi-View Views (generate / reuse)
+- **`generate`**: runs the Qwen branch and saves `side.png`, `front.png` and `back.png` to `output/<folder>/`.
+- **`reuse saved`**: loads those files and skips Qwen entirely, so you can try other view combinations in a few minutes.
+- `include_front` / `include_back`: views that are switched off are neither generated nor used.
 
-## Install
+### Multi-View Scale Normalize (Pixal3D)
+- Cuts out every view with BiRefNet and drops stray specks.
+- Scales all views to the side view's height and frames them on one square canvas.
+- Mirrors the side view to make the opposite side, so both flanks match exactly.
+- Outputs `front / left / back / right` for **Pixal3D Multi-View Conditioning**, plus a preview strip. Disabled views output nothing, and Pixal3D skips them.
 
-```bash
-cd ComfyUI/custom_nodes
-git clone https://github.com/nabotz/comfyui-multiview-kit
-```
+![Normalized views: front (switched off) | left | back | right](docs/views_normalized.jpg)
 
-Restart ComfyUI. No extra Python packages are needed (it uses torch, numpy, PIL and, if present, scipy for speck removal).
-
-The example workflow is in [`example_workflows/image_to_3d_multiview.json`](example_workflows/image_to_3d_multiview.json). Drag it onto the canvas.
-
-### Requirements
+## Requirements
 
 - A recent ComfyUI with the core Pixal3D / TRELLIS.2 and Qwen-Image 2.1 nodes. Tested on ComfyUI 0.43.0 (Comfy Desktop, Windows).
 - [ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF), only because the example loads Qwen-Image as GGUF. Swap the loader if you use other weights.
-- Models used by the example workflow (file names as they appear in the loaders):
 
-| Folder | File |
-|---|---|
-| `models/diffusion_models` | `qwen-image-2.1-UC-Q8_0.gguf` (a community GGUF build of Qwen-Image 2.1; any Qwen-Image 2.1 edit-capable weights work) |
-| `models/text_encoders` | `qwen3vl_8b_int8_convrot.safetensors` |
-| `models/vae` | `qwen_image_2.1_vae_bf16.safetensors` |
-| `models/diffusion_models` | `pixal3d_multiview_int8_convrot.safetensors` |
-| `models/vae` | `trellis_2_shape_vae_bf16.safetensors`, `trellis_2_texture_vae_bf16.safetensors` |
-| `models/clip_vision` | `dino_v3_L_naf_fp32.safetensors` |
-| `models/background_removal` | `birefnet.safetensors` |
+Models used by the example workflow:
 
-Check each model's own license before using the results commercially.
+| Stage | Folder | File |
+|---|---|---|
+| Qwen edit | `models/diffusion_models` | `qwen-image-2.1-UC-Q8_0.gguf` ¹ |
+| Qwen edit | `models/text_encoders` | `qwen3vl_8b_int8_convrot.safetensors` |
+| Qwen edit | `models/vae` | `qwen_image_2.1_vae_bf16.safetensors` |
+| Cutout | `models/background_removal` | `birefnet.safetensors` |
+| Pixal3D | `models/diffusion_models` | `pixal3d_multiview_int8_convrot.safetensors` |
+| Pixal3D | `models/clip_vision` | `dino_v3_L_naf_fp32.safetensors` |
+| Pixal3D | `models/vae` | `trellis_2_shape_vae_bf16.safetensors` |
+| Pixal3D | `models/vae` | `trellis_2_texture_vae_bf16.safetensors` |
 
-## How to use
+¹ A community GGUF build of Qwen-Image 2.1. Any Qwen-Image 2.1 weights that support edit mode work.
 
-1. Load your character image (any pose or angle; full body works best).
-2. In **Multi-View Prompts**, set `subject` (e.g. `shark-horse creature`) and `details` (head, colors, limbs, tail). English works best.
-3. View size: 1280×960 for animals and long creatures, 960×1280 for humanoids.
-4. Run with **Multi-View Views** on `generate`. Check the `views_normalized` preview (front | left | back | right).
-5. To try other view combinations, switch to `reuse saved`, toggle `include_front` / `include_back`, and run again. Only the 3D part runs.
-6. The model is saved to `output/3d/mv3d_*.glb`.
+Check each model's license before using the results commercially.
 
-## What we learned testing it
+## Usage
 
-- **Consistent views beat more views.** One inconsistent view does more damage than a missing one. Pixal3D only has four fixed slots (0/90/180/270°, eye level).
-- **Long snouts (sharks, horses, crocodiles): start without the front view.** Qwen tends to draw a cartoon face with forward-facing eyes from the front, which conflicts with the side view and blurs the eyes and teeth on the mesh.
+1. **Load an image.** Any pose or angle works; full body works best.
+2. **Describe the character** in Multi-View Prompts: `subject` (e.g. `shark-horse creature`) and `details` (head, colors, limbs, tail). English works best.
+3. **Pick the view size:** 1280×960 for animals and long creatures, 960×1280 for humanoids.
+4. **Run** with Multi-View Views on `generate`, then check the `views_normalized` preview (front | left | back | right).
+5. **Iterate:** switch to `reuse saved`, toggle `include_front` / `include_back`, and run again. Only the 3D part runs.
+6. **Get the result** from `output/3d/mv3d_*.glb`.
+
+For a new character, switch back to `generate`, or change `folder` to keep the old views.
+
+## Tips
+
+- **Consistent views beat more views.** Pixal3D has four fixed slots (0°, 90°, 180°, 270°, at eye level), and one inconsistent view does more damage than a missing one.
+- **For long snouts (sharks, horses, crocodiles), start without the front view.** Qwen tends to draw a cartoon face with forward-facing eyes from the front, which conflicts with the side view and blurs the eyes and teeth on the mesh.
 
   ![Head close-up: 3 views (top) vs 4 views (bottom)](docs/3view_vs_4view_head.jpg)
 
-- **Without a front view, the very tip of a snout is a blind spot.** The texture there is guessed from neighboring pixels and can come out dark. Touch it up in Blender, or use the front view when it's clean.
-- **The anti-ghost wording in the front/back templates matters.** Without it, Qwen often leaves a faint copy of the side view in the background, and the cutout picks it up.
-- **Comfy Desktop uses a RAM-pressure cache.** With the Qwen and Pixal3D models in one graph, cached Qwen outputs get evicted, which is why `reuse saved` exists.
+- **Without a front view, the very tip of a snout is a blind spot.** Its texture is guessed from nearby pixels and can come out dark. Touch it up in Blender, or use the front view when it comes out clean.
+- **Use `reuse saved` while experimenting.** Comfy Desktop uses a RAM-pressure cache, so with Qwen and Pixal3D in one graph the cached Qwen outputs usually get evicted between runs.
 
-Rough timings on an RTX 5060 Ti 16 GB with 32 GB RAM: full run (3 Qwen views + 3D) about 7 minutes; `reuse saved` (3D only) about 2.7 minutes.
+## Performance
+
+Rough timings on an RTX 5060 Ti 16 GB with 32 GB RAM:
+
+| Run | Time |
+|---|---|
+| `generate`, side + back views, then 3D | ~7 min |
+| `generate`, all three views, then 3D | ~8–9 min |
+| `reuse saved` (3D only) | ~2.7 min |
+
+## Repository layout
+
+```
+__init__.py                    node registration
+src/nodes.py                   the three nodes
+example_workflows/             ready-to-load workflow
+docs/                          images used in this README
+```
 
 ## Credits
 
