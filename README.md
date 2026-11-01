@@ -37,20 +37,22 @@ Builds the three edit prompts (side view facing left, front, back) from a short 
 
 ### Multi-View Views (generate / reuse)
 - **`generate`**: runs the Qwen branch and saves `side.png`, `front.png` and `back.png` to `output/<folder>/`.
-- **`reuse saved`**: loads those files and skips Qwen entirely, so you can try other view combinations in a few minutes.
+- **`reuse saved`**: loads those files instead of running the Qwen branch, so you can try other view combinations in a few minutes. ComfyUI still validates the whole graph, so the input image and the Qwen model files must exist.
 - `include_front` / `include_back`: views that are switched off are neither generated nor used.
+- Each `generate` run writes `views.json` listing the views it made, so `reuse saved` refuses to mix in an old view left over from a previous character. Changed files on disk are picked up on the next run.
 
 ### Multi-View Scale Normalize (Pixal3D)
 - Cuts out every view with BiRefNet and drops stray specks.
 - Scales all views to the side view's height and frames them on one square canvas.
-- Mirrors the side view to make the opposite side, so both flanks match exactly.
+- Mirrors the side view to make the opposite side, so both flanks match exactly. Asymmetric characters become symmetric this way; to keep the asymmetry, turn `mirror_other_side` off and connect your own `other_side_image`.
+- Optional mask inputs expect foreground = 1 (like Remove Background). A LoadImage MASK is inverted, so invert it first.
 - Outputs `front / left / back / right` for **Pixal3D Multi-View Conditioning**, plus a preview strip. Disabled views output nothing, and Pixal3D skips them.
 
 ![Normalized views: front (switched off) | left | back | right](docs/views_normalized.jpg)
 
 ## Requirements
 
-- A recent ComfyUI with the core Pixal3D / TRELLIS.2 and Qwen-Image 2.1 nodes. Tested on ComfyUI 0.43.0 (Comfy Desktop, Windows).
+- A recent ComfyUI with the core Pixal3D / TRELLIS.2 and Qwen-Image 2.1 nodes. Tested on ComfyUI 0.43.0 and 0.43.2 (Comfy Desktop, Windows).
 - [ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF), only because the example loads Qwen-Image as GGUF. Swap the loader if you use other weights.
 
 Models used by the example workflow:
@@ -76,7 +78,7 @@ Check each model's license before using the results commercially.
 2. **Describe the character** in Multi-View Prompts: `subject` (e.g. `shark-horse creature`) and `details` (head, colors, limbs, tail). English works best.
 3. **Pick the view size:** 1280×960 for animals and long creatures, 960×1280 for humanoids.
 4. **Run** with Multi-View Views on `generate`, then check the `views_normalized` preview (front | left | back | right).
-5. **Iterate:** switch to `reuse saved`, toggle `include_front` / `include_back`, and run again. Only the 3D part runs.
+5. **Iterate:** switch to `reuse saved`, toggle `include_front` / `include_back`, and run again. Only the cutout and 3D part run.
 6. **Get the result** from `output/3d/mv3d_*.glb`.
 
 For a new character, switch back to `generate`, or change `folder` to keep the old views.

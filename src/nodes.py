@@ -7,6 +7,8 @@ MultiViewScaleNormalize puts every view on the SAME scale (the bundled ImageCrop
                         the opposite side, so both flanks match exactly.
 """
 
+import json
+
 import torch
 import torch.nn.functional as F
 
@@ -89,8 +91,9 @@ def _drop_specks(m, binary, min_fraction):
         return m, binary
     grown = ndimage.binary_dilation(binary.numpy(), iterations=2)
     labels, count = ndimage.label(grown)
-    if count <= 1:
+    if count == 0:
         return m, binary
+    # always applied (even with a single island) so faint background haze is cleared the same way in every view
     sizes = ndimage.sum(binary.numpy(), labels, index=range(1, count + 1))
     keep_ids = [k + 1 for k, s in enumerate(sizes) if s >= min_fraction * sizes.max()]
     keep = torch.from_numpy(__import__("numpy").isin(labels, keep_ids))
@@ -160,13 +163,13 @@ class MultiViewScaleNormalize:
             },
             "optional": {
                 "bg_removal_model": ("BACKGROUND_REMOVAL", {"tooltip": "Cuts out every view that has no mask connected (Load Background Removal Model)."}),
-                "side_mask": ("MASK",),
+                "side_mask": ("MASK", {"tooltip": "Optional. Foreground = 1, like Remove Background outputs. A LoadImage MASK is inverted (1 = transparent), so invert it first. Not connected: the bg_removal_model cuts the view out."}),
                 "front_image": ("IMAGE",),
-                "front_mask": ("MASK",),
+                "front_mask": ("MASK", {"tooltip": "Optional. Foreground = 1, like Remove Background outputs. A LoadImage MASK is inverted (1 = transparent), so invert it first. Not connected: the bg_removal_model cuts the view out."}),
                 "back_image": ("IMAGE",),
-                "back_mask": ("MASK",),
+                "back_mask": ("MASK", {"tooltip": "Optional. Foreground = 1, like Remove Background outputs. A LoadImage MASK is inverted (1 = transparent), so invert it first. Not connected: the bg_removal_model cuts the view out."}),
                 "other_side_image": ("IMAGE",),
-                "other_side_mask": ("MASK",),
+                "other_side_mask": ("MASK", {"tooltip": "Optional. Foreground = 1, like Remove Background outputs. A LoadImage MASK is inverted (1 = transparent), so invert it first. Not connected: the bg_removal_model cuts the view out."}),
             },
         }
 
@@ -234,6 +237,21 @@ def _load_png(path):
     return torch.from_numpy(arr)[None]
 
 
+def _views_dir(folder):
+    """Resolve `folder` inside the ComfyUI output directory; refuse anything that escapes it."""
+    import os
+    import folder_paths
+    root = os.path.realpath(folder_paths.get_output_directory())
+    target = os.path.realpath(os.path.join(root, folder.strip().strip("/\\") or "mv3d/latest"))
+    try:
+        inside = os.path.commonpath([root, target]) == root
+    except ValueError:  # different drive on Windows
+        inside = False
+    if not inside or target == root:
+        raise ValueError("MultiViewViews: folder must be a subfolder of the ComfyUI output directory")
+    return root, target
+
+
 class MultiViewViews:
     """Generate the turnaround views once, then reuse them: in 'reuse' mode the upstream Qwen branch never runs."""
 
@@ -242,13 +260,13 @@ class MultiViewViews:
         return {
             "required": {
                 "mode": (["generate", "reuse saved"], {"default": "generate",
-                         "tooltip": "generate: run Qwen and save the views. reuse saved: load the last saved views and skip Qwen entirely (fast re-runs of the 3D part)."}),
+                         "tooltip": "generate: run Qwen and save the views. reuse saved: load the last saved views; the Qwen branch is not executed (fast re-runs of the 3D part), though ComfyUI still checks that its model files exist."}),
                 "folder": ("STRING", {"default": "mv3d/latest", "tooltip": "Subfolder of ComfyUI output where side.png / front.png / back.png are kept."}),
                 "include_front": ("BOOLEAN", {"default": True, "tooltip": "Off: the front view is neither generated nor used (long snouts often get a wrong front face)."}),
                 "include_back": ("BOOLEAN", {"default": True}),
             },
             "optional": {
-                "side": ("IMAGE", {"lazy": True}),
+                "side": ("IMAGE", {"lazy": True, "tooltip": "Needed in generate mode. Every view that is switched on must be connected."}),
                 "front": ("IMAGE", {"lazy": True}),
                 "back": ("IMAGE", {"lazy": True}),
             },
@@ -265,6 +283,26 @@ class MultiViewViews:
     def _wanted(include_front, include_back):
         return ["side"] + (["front"] if include_front else []) + (["back"] if include_back else [])
 
+    @classmethod
+    def IS_CHANGED(cls, mode, folder, include_front, include_back, **_):
+        # ComfyUI caches outputs by input values only. In 'reuse saved' mode the result depends on files on
+        # disk, so fold their modification times into the cache key: re-generated views are picked up.
+        if mode == "generate":
+            return "generate"
+        import os
+        try:
+            _, out_dir = _views_dir(folder)
+        except ValueError:
+            return float("nan")
+        sig = []
+        for name in ["views.json"] + [f"{n}.png" for n in cls._wanted(include_front, include_back)]:
+            try:
+                st = os.stat(os.path.join(out_dir, name))
+                sig.append(f"{name}:{st.st_mtime_ns}:{st.st_size}")
+            except OSError:
+                sig.append(f"{name}:missing")
+        return "|".join(sig)
+
     def check_lazy_status(self, mode, folder, include_front, include_back, side=None, front=None, back=None):
         if mode != "generate":
             return []
@@ -273,28 +311,34 @@ class MultiViewViews:
 
     def run(self, mode, folder, include_front, include_back, side=None, front=None, back=None):
         import os
-        import folder_paths
-        root = os.path.abspath(folder_paths.get_output_directory())
-        out_dir = os.path.abspath(os.path.join(root, folder.strip().strip("/\\") or "mv3d/latest"))
-        if os.path.commonpath([root, out_dir]) != root:
-            raise ValueError("MultiViewViews: folder must stay inside the ComfyUI output directory")
+        root, out_dir = _views_dir(folder)
         wanted = self._wanted(include_front, include_back)
         given = {"side": side, "front": front, "back": back}
         result = {"side": None, "front": None, "back": None}
+        manifest = os.path.join(out_dir, "views.json")
         if mode == "generate":
             os.makedirs(out_dir, exist_ok=True)
             for name in wanted:
                 if given[name] is None:
                     raise ValueError(f"MultiViewViews: '{name}' input is not connected")
-                _save_png(given[name], os.path.join(out_dir, f"{name}.png"))
-                result[name] = given[name]
+                path = os.path.join(out_dir, f"{name}.png")
+                _save_png(given[name], path)
+                # pass on exactly what was saved, so a later 'reuse saved' run gets identical pixels
+                result[name] = _load_png(path)
+            with open(manifest, "w", encoding="utf-8") as f:
+                json.dump({"views": wanted}, f)
         else:
+            saved = None
+            if os.path.isfile(manifest):
+                with open(manifest, encoding="utf-8") as f:
+                    saved = json.load(f).get("views")
             for name in wanted:
                 path = os.path.join(out_dir, f"{name}.png")
-                if not os.path.isfile(path):
-                    raise ValueError(f"MultiViewViews: {path} not found. Run once in 'generate' mode (with {name} included) first.")
+                if not os.path.isfile(path) or (saved is not None and name not in saved):
+                    raise ValueError(f"MultiViewViews: no '{name}' view from the last 'generate' run in {out_dir}. "
+                                     f"Switch {name} off, or run 'generate' with it switched on.")
                 result[name] = _load_png(path)
-        sub = os.path.relpath(out_dir, folder_paths.get_output_directory())
+        sub = os.path.relpath(out_dir, root).replace("\\", "/")
         ui = [{"filename": f"{n}.png", "subfolder": sub, "type": "output"} for n in wanted]
         return {"ui": {"images": ui}, "result": (result["side"], result["front"], result["back"])}
 
