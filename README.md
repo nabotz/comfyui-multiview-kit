@@ -90,6 +90,10 @@ For a new character, switch back to `generate`, or change `folder` to keep the o
 
   ![Head close-up: 3 views (top) vs 4 views (bottom)](docs/3view_vs_4view_head.jpg)
 
+- **Humanoids usually take all four views.** In our humanoid test (an original blacksmith character, 960×1280), the front view came out clean and the mesh kept one-sided details such as a hammer in one hand and a pouch on one hip, even though the mirrored side shows them on both sides. That is one test, not a guarantee, so check the result for asymmetric props.
+
+  ![Humanoid test, 4 views: 8-angle render](docs/humanoid_orbit.jpg)
+
 - **Without a front view, the very tip of a snout is a blind spot.** Its texture is guessed from nearby pixels and can come out dark. Touch it up in Blender, or use the front view when it comes out clean.
 - **Use `reuse saved` while experimenting.** Comfy Desktop uses a RAM-pressure cache, so with Qwen and Pixal3D in one graph the cached Qwen outputs usually get evicted between runs.
 
@@ -100,7 +104,7 @@ Rough timings on an RTX 5060 Ti 16 GB with 32 GB RAM:
 | Run | Time |
 |---|---|
 | `generate`, side + back views, then 3D | ~7 min |
-| `generate`, all three views, then 3D | ~8–9 min |
+| `generate`, all three views, then 3D | ~8 min |
 | `reuse saved` (3D only) | ~2.7 min |
 
 ## Repository layout
